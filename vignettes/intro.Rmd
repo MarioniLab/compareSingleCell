@@ -1,0 +1,65 @@
+---
+title: Comparative analyses of single-cell RNA-seq data with R/Bioconductor
+author:
+- name: Aaron T. L. Lun
+  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
+date: "`r Sys.Date()`"
+vignette: >
+  %\VignetteIndexEntry{01. Introduction}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+output:
+  BiocStyle::html_document:
+    toc_float: true
+bibliography: ref.bib
+---
+
+```{r style, echo=FALSE, results='hide', message=FALSE, cache=FALSE}
+library(BiocStyle)
+library(knitr)
+opts_chunk$set(error=FALSE, message=FALSE, warning=FALSE, cache=TRUE)
+```
+
+# Workflow version information
+
+**R version**: `r R.version.string`
+
+**Bioconductor version**: `r BiocManager::version()`
+
+**Package**: `r packageVersion("simpleSingleCell")`
+
+# Overview 
+
+Single-cell RNA sequencing (scRNA-seq) is widely used to characterize the transcriptional heterogeneity of cell populations at single-cell resolution.
+A powerful approach is to use scRNA-seq in multi-condition experiments to detect changes in population composition and expression profiles between conditions.
+For example, a researcher could use this strategy to detect changes in cell type abundance after drug treatment [@richard2018tcell] or genetic modification [@scialdone2016resolving].
+This provides more information about biology - and in particular, causality - than more conventional scRNA-seq experiments with only one biological condition.
+
+The increased complexity of the experimental design is reflected in the increased complexity of the subsequent computational analysis.
+We need to consider how to merge samples from different conditions onto the same coordinate system;
+how to test for differences in abundance or expression between conditions, possibly in the presence of replicates;
+and how to interpret and visualize the results with condition-specific metadata.
+These must be considered in addition to low-level steps such as quality control and normalization, as covered in the `r Biocpkg("simpleSingleCell")` workflow [@lun2016step]. 
+
+Here, we provide workflows for performing comparative analyses of multi-condition scRNA-seq experiments.
+Using droplet-based data [@zheng2017massively] from a study of the early embryo, we demonstrate key steps including sample merging and differential analyses.
+This is mainly performed with software from the open-source Bioconductor project [@huber2015orchestrating].
+The aim is to provide readers with clear usage examples to facilitate construction of their own custom analysis pipelines.
+
+# Author information
+
+## Author contributions
+
+A.T.L.L. developed and tested workflows on all datasets.
+
+## Competing interests
+
+No competing interests were disclosed.
+
+## Grant information
+
+A.T.L.L. was supported by core funding from Cancer Research UK (award no. A17197).
+
+## Acknowledgements
+
+# References
