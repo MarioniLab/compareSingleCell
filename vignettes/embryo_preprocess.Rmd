@@ -1,0 +1,158 @@
+---
+title: Preprocessing the embryo chimera data set
+author:
+- name: Jonathan A. Griffiths
+  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
+- name: Aaron T. L. Lun
+  affiliation: *CRUK
+date: "`r Sys.Date()`"
+vignette: >
+  %\VignetteIndexEntry{02. Embryo preprocessing}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+output:
+  BiocStyle::html_document:
+    toc_float: true
+    bibliography: ref.bib
+---
+
+<!--
+AL: asterisks below remove weird highlighting on my editor.
+****
+-->
+
+```{r, echo=FALSE, results="hide"}
+knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
+library(BiocStyle)
+```
+
+# Introduction
+
+We will demonstrate a comparative analysis using data from a study of the early mouse embryo.
+E8.5 embryos were dissociated and used to generate scRNA-seq data from the 10X Genomics protocol [@zheng2017massively].
+This was performed using embryos from both wild-type (B6) mice and _Tal1_-knockout mice.
+The aim is to study the function of _Tal1_ (a transcription factor implicated in haematopoietic differentiation) in embryonic development.
+For each genotype, two biological replicates are available where each replicate contains over 10,000 cells from an independent pool of 6-7 embryos.
+
+# Obtaining the counts
+
+We obtain the count data through the `r Biocpkg("BiocFileCache")` framework.
+This caches the data locally upon the first download, avoiding the need to repeat the download on subsequent analyses.
+
+```{r}
+library(BiocFileCache)
+bfc <- BiocFileCache("raw_data", ask=FALSE)
+tarball <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+    "jmlab/chimera_tal1_data.tar.gz"))
+
+# Unpacking the tar ball to get the necessary files.
+count.path <- "chimera-tal1/raw_counts.mtx"
+meta.path <- "chimera-tal1/meta.tab"
+gene.path <- "chimera-tal1/genes.tsv"
+untar(tarball, files=c(count.path, meta.path, gene.path), exdir=tempdir())
+```
+
+We load in the count data from the MatrixMarket format, using methods from the `r CRANpkg("Matrix")` package:
+
+```{r}
+library(Matrix)
+counts <- readMM(file.path(tempdir(), count.path)) 
+counts <- as(counts, "dgCMatrix") # more space-efficient than dgTMatrix.
+dim(counts)
+```
+
+```{r, echo=FALSE, results="hide"}
+gc()
+```
+
+We then store the count matrix in a `SingleCellExperiment` object with the metadata associated with each cell and gene.
+
+```{r}
+untar(tarball, files=meta.path, exdir=tempdir())
+meta.tab <- read.delim(file.path(tempdir(), meta.path), stringsAsFactors=FALSE)
+
+untar(tarball, files=gene.path, exdir=tempdir())
+gene.tab <- read.delim(file.path(tempdir(), gene.path), header=FALSE)
+colnames(gene.tab) <- c("ENSEMBL", "SYMBOL")
+
+library(SingleCellExperiment)
+sce <- SingleCellExperiment(list(counts=counts), colData=meta.tab, rowData=gene.tab)
+sce
+```
+
+This object contains cells from all four samples, with positive staining for the Tomato marker indicating that _Tal1_ was knocked out.
+
+```{r}
+table(sce$sample, sce$tomato)
+```
+
+```{r, echo=FALSE, results="hide"}
+gc()
+```
+
+# Quality control on the cells
+
+Quality control (QC) on this data set has already been performed using a procedure similar to that described `r Biocpkg("simpleSingleCell", "tenx.html", "here")`.
+
+- Cell-containing droplets were identified using the `emptyDrops()` function from the `r Biocpkg("DropletUtils")` package at a false discovery rate of 1%.
+See `r Biocpkg("simpleSingleCell", "tenx.html#calling-cells-from-empty-droplets", "here")` for more details.
+- Cells with high mitochondrial content were removed using an outlier-based approach as discussed `r Biocpkg("simpleSingleCell", "tenx.html#quality-control-on-the-cells", "here")`.
+This removes putative damaged cells that have lost much of their cytoplasmic mRNA.
+
+These steps can be performed separately per sample so existing QC methods for 10X data can be directly applied.
+At this point, there is no need to explicitly use information across samples.
+However, users should continue to inspect diagnostic statistics like the percentage of cells discarded in each sample.
+Large differences between samples may be indicative of (i) strong biological differences at best or 
+(ii) underlying technical problems that could compromise the downstream comparative analysis.
+
+The code used for the processing of the embryo data set is available at https://github.com/MarioniLab/EmbryoTimecourse2018.
+Note that, in this case, the mitochondrial filtering was performed on the pool of cells from all samples.
+This is not strictly necessary.
+
+# Normalization of cell-specific biases
+
+We will use the `computeSumFactors()` function from `r Biocpkg("scran")` to calculate size factors for each cell.
+This removes scaling biases associated with cell-specific differences in capture efficiency, sequencing depth and composition biases. 
+We refer users to the `r Biocpkg("simpleSingleCell", "tenx.html#normalizing-for-cell-specific-biases", "previous workflow")` for more details on the method.
+Note that we set `block=` to perform pre-clustering within each sample to reduce computational work.
+
+```{r}
+library(scran)
+
+set.seed(100) # For the irlba usage.
+clusters <- quickCluster(sce, use.ranks=FALSE, pc.approx=TRUE, block=sce$sample)
+length(unique(clusters))
+
+sce <- computeSumFactors(sce, clusters=clusters, min.mean=0.1)
+summary(sizeFactors(sce))    
+```
+
+We check that the size factors are roughly aligned with the total library sizes (Figure \@ref(fig:normplot)).
+Deviations from the diagonal correspond to composition biases due to differential expression between cell subpopulations.
+
+```{r normplot, fig.cap="Size factor estimates for each cell, plotted against the total library size."}
+plot(colSums(counts(sce)), sizeFactors(sce), xlab="Total library size", 
+    ylab="Size factor", log="xy")
+```
+
+In practice, it is possible to perform this step separately for each sample, and then to combine the resulting `SingleCellExperiment` objects together.
+This may be logistically simpler but requires a call to `multiBatchNorm()` to standardize the size factors to the same scale in the combined object.
+See `r Biocpkg("simpleSingleCell", "batch.html#feature-selection-across-batches", "here")` for a demonstration of how `multiBatchNorm()` might be used.
+
+# Concluding remarks
+
+Once the initial processing is done, we can save the resulting `SingleCellExperiment` object to file.
+This will be used when merging the different samples onto the same coordinate system.
+
+```{r}
+saveRDS(sce, "embryo_processed.Rmd")
+```
+
+All software packages used in this workflow are publicly available from the Comprehensive R Archive Network (https://cran.r-project.org) or the Bioconductor project (http://bioconductor.org). 
+The specific version numbers of the packages used are shown below, along with the version of the R installation.
+
+```{r}
+sessionInfo()
+```
+
+# References
