@@ -1,9 +1,9 @@
 ---
 title: Preprocessing the embryo chimera data set
 author:
-- name: Jonathan A. Griffiths
-  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
 - name: Aaron T. L. Lun
+  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
+- name: Jonathan A. Griffiths
   affiliation: *CRUK
 date: "`r Sys.Date()`"
 vignette: >
@@ -192,7 +192,7 @@ Once the initial processing is done, we can save the resulting `SingleCellExperi
 This will be used when merging the different samples onto the same coordinate system.
 
 ```{r}
-saveRDS(sce, "embryo_processed.Rmd")
+saveRDS(sce, "embryo_processed.rds")
 ```
 
 All software packages used in this workflow are publicly available from the Comprehensive R Archive Network (https://cran.r-project.org) or the Bioconductor project (http://bioconductor.org). 
