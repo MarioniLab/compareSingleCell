@@ -1,0 +1,220 @@
+---
+title: Merging the embryo chimera data set
+author:
+- name: Jonathan A. Griffiths
+  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
+- name: Aaron T. L. Lun
+  affiliation: *CRUK
+date: "`r Sys.Date()`"
+vignette: >
+  %\VignetteIndexEntry{03. Embryo merging}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+output:
+  BiocStyle::html_document:
+    toc_float: true
+bibliography: ref.bib
+---
+
+<!--
+AL: asterisks below remove weird highlighting on my editor.
+****
+-->
+
+```{r, echo=FALSE, results="hide"}
+knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
+library(BiocStyle)
+```
+
+# Introduction
+
+Once a processed `SingleCellExperiment` is available, the next step is to merge different samples to place them on the same coordinate system.
+This allows us to perform downstream procedures like dimensionality reduction and clustering without needing to model sample-to-sample variation in expression.
+We will merge using the mutual nearest neighbors (MNN) method [@haghverdi2017batch] as described `r Biocpkg("simpleSingleCell", "batch.html", "elsewhere")`.
+
+```{r}
+library(SingleCellExperiment)
+sce <- readRDS("embryo_processed.rds")
+```
+
+# Feature selection
+
+# Modelling the technical variability
+
+We model the technical noise in each sample using the `multiBlockVar()` function as described `r Biocpkg("simpleSingleCell", "var.html#fitting-batch-specific-trends", "here")`.
+As this data set does not contain spike-ins, we set `make.tech.trend=TRUE` to estimate the technical component based on Poisson noise -  
+see `r Biocpkg("simpleSingleCell", "tenx.html#modelling-the-mean-variance-trend", "here")` for details.
+
+```{r}
+library(scran)
+dec.out <- multiBlockVar(sce, block=sce$sample, make.tech.trend=TRUE)
+dec.out[,-7] # don't show per-block results.
+```
+
+The trend lies close to the lower bound of the per-gene variances (Figure \@ref(fig:trendplots)), indicating that the assumption of Poisson noise is fairly reasonable.
+
+```{r trendplots, fig.wide=TRUE, fig.cap="Mean-variance relationship in each sample, using statistics computed from log-normalized expression values. Each point represents a gene and the blue line represents the fitted Poisson trend in each sample."}
+par(mfrow=c(2,2))
+per.block.stats <- dec.out$per.block
+for (i in colnames(per.block.stats)) {
+    cur.stats <- per.block.stats[,i]
+    plot(cur.stats$mean, cur.stats$total, xlab="Mean log-expression", 
+        ylab="Variance", main=sprintf("Sample %s", i), pch=16)
+    curve(metadata(cur.stats)$trend(x), add=TRUE, col="dodgerblue", lwd=2)
+}
+```
+
+## Identifying genes of interest
+
+We define the features of interest as those with net biological components greater than zero.
+This enriches for genes that contain some biological variation, reducing the effect of uninteresting Poisson noise on downstream analyses.
+
+```{r}
+to.use <- dec.out$bio > 0
+summary(to.use)
+```
+
+The injected KO cells were derived from a single male cell line while the host embryos were a mix of male or female mice.
+Thus, there is a (largely uninteresting) sex effect between the WT and KO samples.
+To mitigate this, we remove _Xist_ and genes on the Y chromosome.
+
+```{r}
+library(TxDb.Mmusculus.UCSC.mm10.ensGene)
+loc <- mapIds(TxDb.Mmusculus.UCSC.mm10.ensGene, key=rowData(sce)$ENSEMBL, 
+    keytype="GENEID", column="CDSCHROM")
+is.y <- loc=="chrY" & !is.na(loc)
+to.use <- to.use & !is.y 
+to.use[which(rowData(sce)$SYMBOL=="Xist")] <- FALSE
+sum(to.use)
+```
+
+We also remove the Tomato marker used to sort for KO cells.
+
+```{r}
+to.use[rowData(sce)$SYMBOL=="tomato-td"] <- FALSE
+sum(to.use)
+```
+
+# Dimensionality reduction with PCA
+
+We use principal components analysis (PCA) to perform dimensionality reduction prior to merging.
+This reduces computational work and removes some high-dimensional noise, as `r Biocpkg("simpleSingleCell", "reads.html#denoising-expression-values-using-pca", "previously discussed")`.
+We obtain a rough estimate of how many PCs to retain by calling `denoisePCA()` on each sample.
+
+```{r}
+set.seed(100) # for irlba.
+npcs <- list()
+per.batch <- list()
+
+for (i in unique(sce$sample)) {
+    cur.sce <- sce[,sce$sample==i]
+    sample.name <- as.character(i)
+    per.batch[[sample.name]] <- cur.sce
+
+    npcs[[sample.name]] <- denoisePCA(cur.sce, 
+        dec.out$per.block[,sample.name], 
+        subset.row=to.use, # using our features of interest.
+        value="n", approximate=TRUE)
+}
+
+npcs <- unlist(npcs)
+npcs
+```
+
+We set the number of retained PCs to the largest of the per-sample estimates in `collected`, plus some additional dimensions for inter-sample differences.
+
+```{r}
+n.retain <- max(npcs) + length(npcs) - 1L
+n.retain
+```
+
+We perform an overall PCA on cells from all samples using `multiBatchPCA()`.
+We subset to use our features of interest in `to.use` and we keep `n.retain` PCs.
+
+```{r}
+library(batchelor)
+library(BiocSingular)
+
+set.seed(101) # for irlba.
+pc.out <- do.call(batchelor::multiBatchPCA, c(per.batch, 
+    list(d=n.retain, subset.row=to.use, BSPARAM=IrlbaParam())))
+names(pc.out)
+```
+
+# Batch correction with MNN
+
+We use the `fastMNN()` function in a hierarchical manner as described `r Biocpkg("simpleSingleCell", "batch.html#hierarchical-merging", "elsewhere")`.
+This involves merging the most similar samples before merging those that are more different, to weaken the assumption of shared populations required for correct MNN detection.
+In this case, we first merge samples from the same genotype to remove the batch effect.
+Note the use of `pc.input=TRUE` to specify that the input values are already in low-dimensional PC space.
+
+```{r}
+ko.out <- batchelor::fastMNN(pc.out[["1"]], pc.out[["2"]], 
+    pc.input=TRUE, compute.variances=TRUE)
+metadata(ko.out)$lost.var
+wt.out <- batchelor::fastMNN(pc.out[["3"]], pc.out[["4"]], 
+    pc.input=TRUE, compute.variances=TRUE)
+metadata(wt.out)$lost.var
+```
+
+The `lost.var` represents the proportion of variance in each batch that is removed by the batch correction^[Specifically, the orthogonalization step, as described `r Biocpkg("simpleSingleCell", "batch.html#with-diagnostics", "here")`.].
+If the assumptions underlying the MNN approach hold, this should be low and represent removal of noise along the batch vector.
+A large proportion of lost variance (>10%) may be cause for concern as it suggests that biological structure within each batch is being discarded.
+
+Our next step is to merge samples across genotypes to remove technical and uninteresting biological differences.
+This includes sex and changes in expression induced by injection or cell sorting.
+
+```{r}
+overall <- batchelor::fastMNN(ko.out$corrected, wt.out$corrected,
+    pc.input=TRUE, compute.variances=TRUE)
+metadata(overall)$lost.var
+```
+
+We store the result as in the `reducedDims` slot of our `SingleCellExperiment` object, for use in downstream functions.
+
+```{r}
+reducedDim(sce, "corrected") <- overall$corrected
+```
+
+Note that the merge to create `overall` will also eliminate changes in expression caused by loss of _Tal1_.
+This is necessary for the purposes of mapping all cells onto a common coordinate system.
+Without such correction, cells of the same type would be separated by the genotype difference across samples, precluding common annotation in downstream analyses.
+Nonetheless, differential expression upon KO is of substantial biological interest and will be recovered in our downstream differential testing.
+
+# Visual inspection of merge results
+
+We use $t$-stochastic neighbor embedding (t-SNE) plots [@van2008visualizing] to perform further dimensionality reduction for visualization.
+In the uncorrected data, cells clearly separate by genotype with no visible batch effects between replicates (Figure \@ref(fig:beforeplot)).
+
+```{r beforeplot, fig.cap="t-SNE plot of the embryo data before MNN correction. Each point represents a cell and is coloured by the sample of origin (KO: 1 and 2, WT: 3 and 4)."}
+library(scater)
+old <- sce
+reducedDim(sce, "PCA") <- do.call(rbind, pc.out)
+plotTSNE(sce, rerun=TRUE, run_args=list(use_dimred="PCA"), colour_by="sample")
+```
+
+After correction, cells from all samples are merged together in the majority of subpopulations (Figure \@ref(fig:afterplot)).
+This is consistent with the removal of the inter-genotype differences and simplifies annotation and interpretation in downstream analyses.
+
+```{r afterplot, fig.cap="t-SNE plot of the embryo data after MNN correction. Each point represents a cell and is coloured by the sample of origin."}
+sce <- runTSNE(sce, use_dimred="corrected", colour_by="sample")
+plotTSNE(sce, colour_by="sample")
+```
+
+# Concluding remarks
+
+We save the `SingleCellExperiment` object with the merged coordinates to file.
+This will be used for downstream analyses such as clustering and differential testing.
+
+```{r}
+saveRDS(sce, "embryo_merged.Rmd")
+```
+
+All software packages used in this workflow are publicly available from the Comprehensive R Archive Network (https://cran.r-project.org) or the Bioconductor project (http://bioconductor.org). 
+The specific version numbers of the packages used are shown below, along with the version of the R installation.
+
+```{r}
+sessionInfo()
+```
+
+# References
