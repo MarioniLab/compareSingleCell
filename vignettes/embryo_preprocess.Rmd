@@ -13,7 +13,7 @@ vignette: >
 output:
   BiocStyle::html_document:
     toc_float: true
-    bibliography: ref.bib
+bibliography: ref.bib
 ---
 
 <!--
@@ -28,7 +28,7 @@ library(BiocStyle)
 
 # Introduction
 
-We will demonstrate a comparative analysis using data from a study of the early mouse embryo.
+We will demonstrate a comparative analysis using data from a study of the early mouse embryo [@pijuansala2019single].
 E8.5 embryos were dissociated and used to generate scRNA-seq data from the 10X Genomics protocol [@zheng2017massively].
 This was performed using chimeric embryos in which _Tal1_-knockout (KO) embryonic stem cells were injected into a wild-type (WT) blastocyst.
 The aim is to study the function of _Tal1_ (a transcription factor implicated in haematopoietic differentiation) in embryonic development.
@@ -39,7 +39,9 @@ fluorescence-activated cell sorting by the expression of the Tomato marker to se
 and using the sorted cell partitions in the 10X protocol.
 This resulted in four samples in total, with two (matched) replicates per genotype containing 10,000 cells per sample.
 
-# Obtaining the counts
+# Setting up the data
+
+## Obtaining the counts
 
 We obtain the count data through the `r Biocpkg("BiocFileCache")` framework.
 This caches the data locally upon the first download, avoiding the need to repeat the download on subsequent analyses.
@@ -62,13 +64,28 @@ We load in the count data from the MatrixMarket format, using methods from the `
 ```{r}
 library(Matrix)
 counts <- readMM(file.path(tempdir(), count.path)) 
-counts <- as(counts, "dgCMatrix") # more space-efficient than dgTMatrix.
 dim(counts)
+```
+
+For the purposes of this demonstration, we will downsample to a quarter of the cells in the original data set.
+This is simply to stay within time and memory limits on the Bioconductor build system^[Namely, 1 hour with 8 GB RAM.], and can be skipped by users with more computing resources.
+
+```{r}
+down.keep <- rep(c(FALSE, FALSE, FALSE, TRUE), length.out=ncol(counts))
+counts <- counts[,down.keep,drop=FALSE]
+```
+
+Finally, we will convert the matrix into the `dgCMatrix` format, which is more space and time-efficient than the default `dgTMatrix` produced by `readMM()`.
+
+```{r}
+counts <- as(counts, "dgCMatrix") 
 ```
 
 ```{r, echo=FALSE, results="hide"}
 gc()
 ```
+
+## Constructing a `SingleCellExperiment`
 
 We store the count matrix in a `SingleCellExperiment` object with the metadata associated with each cell and gene.
 
@@ -77,11 +94,13 @@ untar(tarball, files=meta.path, exdir=tempdir())
 meta.tab <- read.delim(file.path(tempdir(), meta.path), stringsAsFactors=FALSE)
 
 untar(tarball, files=gene.path, exdir=tempdir())
-gene.tab <- read.delim(file.path(tempdir(), gene.path), header=FALSE)
+gene.tab <- read.delim(file.path(tempdir(), gene.path), 
+    header=FALSE, stringsAsFactors=FALSE)
 colnames(gene.tab) <- c("ENSEMBL", "SYMBOL")
 
 library(SingleCellExperiment)
-sce <- SingleCellExperiment(list(counts=counts), colData=meta.tab, rowData=gene.tab)
+sce <- SingleCellExperiment(list(counts=counts), 
+    colData=meta.tab[down.keep,], rowData=gene.tab)
 sce
 ```
 
@@ -95,6 +114,14 @@ table(sce$sample, sce$tomato)
 
 ```{r, echo=FALSE, results="hide"}
 gc()
+```
+
+We set the row names to the gene symbols, augmented with the Ensembl identifier if the symbol is not unique or missing.
+
+```{r}
+library(scater)
+rownames(sce) <- uniquifyFeatureNames(rowData(sce)$SYMBOL, rowData(sce)$ENSEMBL)
+head(rownames(sce))
 ```
 
 # Quality control on the cells
@@ -141,6 +168,13 @@ In this case, the cells below the diagonal probably correspond to erythrocytes t
 ```{r normplot, fig.cap="Size factor estimates for each cell, plotted against the total library size."}
 plot(Matrix::colSums(counts(sce)), sizeFactors(sce), xlab="Total library size", 
     ylab="Size factor", log="xy")
+```
+
+We use the size factors to compute log-transformed normalized expression values, stored as the `"logcounts"` assay.
+
+```{r}
+sce <- normalize(sce)
+assayNames(sce)
 ```
 
 In practice, it is possible to perform this step separately for each sample, and then to combine the resulting `SingleCellExperiment` objects together.
