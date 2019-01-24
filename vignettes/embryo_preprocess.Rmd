@@ -109,6 +109,7 @@ KO cells should stain positive for the Tomato marker.
 Samples 1 and 3 come from the first batch, while samples 2 and 4 come from the second batch.
 
 ```{r}
+sce$sample <- factor(sce$sample)
 table(sce$sample, sce$tomato)
 ```
 
@@ -120,7 +121,7 @@ We set the row names to the gene symbols, augmented with the Ensembl identifier 
 
 ```{r}
 library(scater)
-rownames(sce) <- uniquifyFeatureNames(rowData(sce)$SYMBOL, rowData(sce)$ENSEMBL)
+rownames(sce) <- uniquifyFeatureNames(rowData(sce)$ENSEMBL, rowData(sce)$SYMBOL)
 head(rownames(sce))
 ```
 
