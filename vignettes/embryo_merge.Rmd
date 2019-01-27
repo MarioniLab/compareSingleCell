@@ -47,11 +47,19 @@ see `r Biocpkg("simpleSingleCell", "tenx.html#modelling-the-mean-variance-trend"
 
 ```{r}
 library(scran)
-dec.out <- multiBlockVar(sce, block=sce$sample, make.tech.trend=TRUE)
+dec.out <- multiBlockVar(sce, block=sce$sample, 
+    make.tech.trend=TRUE, weighted=FALSE)
 dec.out[,-7] # don't show per-block results.
 ```
 
-The trend lies close to the lower bound of the per-gene variances (Figure \@ref(fig:trendplots)), indicating that the assumption of Poisson noise is fairly reasonable.
+We also turn off weighting to ensure that each sample contributes equally to the results, regardless of the number of cells.
+This is desirable here because different conditions may have different sets of highly variable genes (HVGs).
+If one condition contains more cells, weighting by the number of cells would bias the combined statistics in favour of that condition's HVGs.
+This differs from more typical applications of `multiBlockVar()` where all samples are replicates.
+In such cases, the underlying set of HVGs should be similar and thus weighting could be used to improve precision without biasing the results.
+
+The trend lies close to the lower bound of the per-gene variances for each sample (Figure \@ref(fig:trendplots)).
+This indicates that the assumption of Poisson noise is reasonable.
 
 ```{r trendplots, fig.wide=TRUE, fig.cap="Mean-variance relationship in each sample, using statistics computed from log-normalized expression values. Each point represents a gene and the blue line represents the fitted Poisson trend in each sample."}
 par(mfrow=c(2,2))
@@ -63,6 +71,11 @@ for (i in colnames(per.block.stats)) {
     curve(metadata(cur.stats)$trend(x), add=TRUE, col="dodgerblue", lwd=2)
 }
 ```
+
+**Comments from Aaron:**
+
+- Turning off weighting in `multiBlockVar()` (and indirectly, `combineVar()`) assumes that there are no samples with very few cells.
+Such samples will have imprecise variance estimates that, without weighting, would add extra uncertainty to the combined statistics.
 
 ## Identifying genes of interest
 
@@ -99,47 +112,46 @@ sum(to.use)
 
 We use principal components analysis (PCA) to perform dimensionality reduction prior to merging.
 This reduces computational work and removes some high-dimensional noise, as `r Biocpkg("simpleSingleCell", "reads.html#denoising-expression-values-using-pca", "previously discussed")`.
-We obtain a rough estimate of how many PCs to retain by calling `denoisePCA()` on each sample.
-
-```{r}
-set.seed(100) # for irlba.
-npcs <- list()
-per.batch <- list()
-
-for (i in unique(sce$sample)) {
-    cur.sce <- sce[,sce$sample==i]
-    sample.name <- as.character(i)
-    per.batch[[sample.name]] <- cur.sce
-
-    npcs[[sample.name]] <- denoisePCA(cur.sce, 
-        dec.out$per.block[,sample.name], 
-        subset.row=to.use, # using our features of interest.
-        value="n", approximate=TRUE)
-}
-
-npcs <- unlist(npcs)
-npcs
-```
-
-We set the number of retained PCs to the largest of the per-sample estimates in `collected`, plus some additional dimensions for inter-sample differences.
-
-```{r}
-n.retain <- max(npcs) + length(npcs) - 1L
-n.retain
-```
-
-We perform an overall PCA on cells from all samples using `multiBatchPCA()`.
-We subset to use our features of interest in `to.use` and we keep `n.retain` PCs.
+We perform PCA across all samples by using `multiBatchPCA()` on our selected subset of genes in `to.use`.
+This ensures each sample contributes equally to the definition of the coordinate space, as described `r Biocpkg("simpleSingleCell", "batch.html#hierarchical-merging", "here")`.
 
 ```{r}
 library(batchelor)
 library(BiocSingular)
 
 set.seed(101) # for irlba.
-pc.out <- do.call(batchelor::multiBatchPCA, c(per.batch, 
-    list(d=n.retain, subset.row=to.use, BSPARAM=IrlbaParam())))
-names(pc.out)
+pc.out <- batchelor::multiBatchPCA(sce, batch=sce$sample, 
+    subset.row=to.use, get.variance=TRUE,
+    BSPARAM=IrlbaParam(), deferred=TRUE) 
+pc.out # one output matrix per level of 'sample'.
 ```
+
+By default, `multiBatchPCA()` will return 50 PCs for all samples.
+We use `denoisePCANumber()` to choose the number of PCs to retain based on our previous estimates of technical noise in this data set.
+This discards later PCs until the variance lost is equal to the total technical component.
+
+```{r}
+to.retain <- denoisePCANumber(
+    metadata(pc.out)$var.explained, # variance explained per PC.
+    sum(dec.out$tech[to.use]), # technical noise in subset of genes.
+    metadata(pc.out)$var.total # total variance in the data
+)
+to.retain
+```
+
+We then subset the matrices to only retain the first `to.retain` PCs in each sample.
+
+```{r}
+for (i in seq_along(pc.out)) {
+    pc.out[[i]] <- pc.out[[i]][,seq_len(to.retain),drop=FALSE]
+}
+```
+
+**Comments from Aaron:**
+
+- We have used methods from `r CRANpkg("irlba")` to speed up the PCA with an approximate algorithm.
+For large data sets, it is possible to achieve further speed gains with parallelization via the `BPPARAM=` argument; 
+or by switching to randomized SVD in `r CRANpkg("rsvd")` via `BiocSingular::RandomParam()`.
 
 # Batch correction with MNN
 
