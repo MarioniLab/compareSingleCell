@@ -122,7 +122,7 @@ library(BiocSingular)
 set.seed(101) # for irlba.
 pc.out <- batchelor::multiBatchPCA(sce, batch=sce$sample, 
     subset.row=to.use, get.variance=TRUE,
-    BSPARAM=IrlbaParam(), deferred=TRUE) 
+    BSPARAM=IrlbaParam(deferred=TRUE))
 pc.out # one output matrix per level of 'sample'.
 ```
 
@@ -149,7 +149,8 @@ for (i in seq_along(pc.out)) {
 
 **Comments from Aaron:**
 
-- We have used methods from `r CRANpkg("irlba")` to speed up the PCA with an approximate algorithm.
+- The `BSPARAM=` argument instructs `multiBatchPCA()` to use methods from `r CRANpkg("irlba")` to speed up the PCA.
+This is done by using an approximate algorithm, with deferred centered and scaling to preserve sparsity.
 For large data sets, it is possible to achieve further speed gains with parallelization via the `BPPARAM=` argument; 
 or by switching to randomized SVD in `r CRANpkg("rsvd")` via `BiocSingular::RandomParam()`.
 
