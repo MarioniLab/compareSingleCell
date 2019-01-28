@@ -101,7 +101,7 @@ to.use[which(rowData(sce)$SYMBOL=="Xist")] <- FALSE
 sum(to.use)
 ```
 
-We also remove the Tomato marker used to sort for KO cells.
+We also remove the tdTomato marker used to sort for KO cells.
 
 ```{r}
 to.use[rowData(sce)$SYMBOL=="tomato-td"] <- FALSE
