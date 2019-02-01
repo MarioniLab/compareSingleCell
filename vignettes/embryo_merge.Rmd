@@ -237,9 +237,9 @@ table(clusters$membership, sce$sample)
 
 We visually examine the clusters on a t-SNE plot to confirm that a sensible partitioning was generated (Figure \@ref(fig:clusterplot)).
 
-```{r clusterplot, fig.cap="t-SNE plot of the MNN-corrected embryo data, where each point represents a cell and is coloured by the identity of the cluster to which it is assigned."}
+```{r clusterplot, fig.cap="t-SNE plot of the MNN-corrected embryo data, where each point represents a cell and is coloured by the identity of the cluster to which it is assigned. The cluster number is also shown at the median coordinates across all cells in that cluster."}
 sce$cluster <- factor(clusters$membership)
-plotTSNE(sce, colour_by="cluster")
+plotTSNE(sce, colour_by="cluster", text_by="cluster", text_colour="red")
 ```
 
 **Comments from Aaron:**
