@@ -13,6 +13,7 @@ vignette: >
 output:
   BiocStyle::html_document:
     toc_float: true
+    titlecaps: false
 bibliography: ref.bib
 ---
 
@@ -36,8 +37,6 @@ We will merge using the mutual nearest neighbors (MNN) method [@haghverdi2017bat
 library(SingleCellExperiment)
 sce <- readRDS("embryo_processed.rds")
 ```
-
-# Feature selection
 
 # Modelling the technical variability
 
