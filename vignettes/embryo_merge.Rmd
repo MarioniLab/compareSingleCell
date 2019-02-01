@@ -214,13 +214,77 @@ sce <- runTSNE(sce, use_dimred="corrected", colour_by="sample")
 plotTSNE(sce, colour_by="sample")
 ```
 
-# Concluding remarks
+# Defining common annotation
 
-We save the `SingleCellExperiment` object with the merged coordinates to file.
-This will be used for downstream analyses such as clustering and differential testing.
+## Clustering cells
+
+We use the shared nearest-neighbour approach [@xu2015identification] to cluster cells in the corrected space, as described
+`r Biocpkg("simpleSingleCell", "umis.html#clustering-cells-into-putative-subpopulations", "here")`
+and `r Biocpkg("simpleSingleCell", "batch.html#using-the-corrected-values-in-downstream-analyses", "here")`.
 
 ```{r}
-saveRDS(sce, "embryo_merged.Rmd")
+snn.gr <- buildSNNGraph(sce, use.dimred="corrected")
+clusters <- igraph::cluster_walktrap(snn.gr)
+table(clusters$membership, sce$sample)
+```
+
+We visually examine the clusters on a t-SNE plot to confirm that a sensible partitioning was generated (Figure \@ref(fig:clusterplot)).
+
+```{r clusterplot, fig.cap="t-SNE plot of the MNN-corrected embryo data, where each point represents a cell and is coloured by the identity of the cluster to which it is assigned."}
+sce$cluster <- factor(clusters$membership)
+plotTSNE(sce, colour_by="cluster")
+```
+
+**Comments from Aaron:**
+
+- More sophisticated diagnostics for graph-based clustering are possible with `clusterModularity()`,
+see `r Biocpkg("simpleSingleCell", "umis.html#evaluating-graph-based-clusters", "this section")` for more details.
+For brevity's sake, we will skip that step here.
+- We do not run `library(igraph)`, but instead use `igraph::` to extract methods from the `r CRANpkg("igraph")` package. 
+This is because `r CRANpkg("igraph")` contains a normalize method that will override its counterpart from `r Biocpkg("scater")`, resulting in some unusual bugs.
+
+## Annotating cell types
+
+We use `findMarkers()` to identify the genes that define each cluster.
+This is done by testing for differential expression between each pair of clusters, and consolidating the results into a single table per cluster.
+See `r Biocpkg("simpleSingleCell", "reads.html#detecting-marker-genes-between-clusters", "here")` for details.
+
+```{r}
+markers <- findMarkers(sce, sce$cluster)
+```
+
+```{r, echo=FALSE}
+blood <- "5"
+hemo <- markers[[blood]]["Hbb-bh1",-(1:3)]
+stopifnot(all(unlist(hemo)>0))
+```
+
+Of particular interest is cluster `blood`.
+This upregulates a range of hemoglobin genes (Figure \@ref(fig:bloodheat)) and probably represents cells in the erythroid lineage.
+
+```{r bloodheat, fig.asp=2, fig.cap=sprintf("Heatmap of the log-fold changes for the top 50 genes expressed in cluster %s compared to all other clusters. Each column represents another cluster.", blood)}
+blood.set <- markers[["5"]]
+as.data.frame(blood.set[1:20,1:3])
+
+logFCs <- as.matrix(blood.set[1:50,-(1:3)])
+colnames(logFCs) <- sub("logFC.", "", colnames(logFCs))
+
+library(pheatmap)
+max.lfc <- max(abs(range(logFCs)))
+pheatmap(logFCs, breaks=seq(-5, 5, length.out=101))
+```
+
+One could repeat this procedure with all of the other clusters.
+However, it is more efficient to use our differential analyses to prioritize clusters of interest, so we will delay further annotation until that point.
+
+# Concluding remarks
+
+We save the `SingleCellExperiment` object with the merged coordinates to file for downstream use in differential testing.
+We also save the test results for later annotation.
+
+```{r}
+saveRDS(sce, "embryo_merged.rds")
+saveRDS(markers, "embryo_markers.rds")
 ```
 
 All software packages used in this workflow are publicly available from the Comprehensive R Archive Network (https://cran.r-project.org) or the Bioconductor project (http://bioconductor.org). 
