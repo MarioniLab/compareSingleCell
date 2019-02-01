@@ -186,6 +186,7 @@ metadata(overall)$lost.var
 We store the result as in the `reducedDims` slot of our `SingleCellExperiment` object, for use in downstream functions.
 
 ```{r}
+# Cell order is the same between sce and corrected: see comments.
 reducedDim(sce, "corrected") <- overall$corrected
 ```
 
@@ -193,6 +194,13 @@ Note that the merge to create `overall` will also eliminate changes in expressio
 This is necessary for the purposes of mapping all cells onto a common coordinate system.
 Without such correction, cells of the same type would be separated by the genotype difference across samples, precluding common annotation in downstream analyses.
 Nonetheless, differential expression upon KO is of substantial biological interest and will be recovered in our downstream differential testing.
+
+**Comments from Aaron:**
+
+- The `reducedDim` assignment assumes that the order of cells in `overall$corrected` is the same as the order of cells in `sce`.
+This is already the case here, as `ko.out$corrected` contains cells from samples 1 and 2 (in that order) while `wt.out$corrected` contains cells from samples 3 and 4 (in that order).
+However, this may not be true for arbitrary merge orders!
+In such cases, we suggest assigning unique column names to each cell so that one can `match()` the row names of `corrected` with the column names of `sce` prior to assignment.
 
 # Visual inspection of merge results
 
