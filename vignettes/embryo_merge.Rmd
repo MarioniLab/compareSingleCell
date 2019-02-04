@@ -31,7 +31,7 @@ library(BiocStyle)
 
 Once a processed `SingleCellExperiment` is available, the next step is to merge different samples to place them on the same coordinate system.
 This allows us to perform downstream procedures like dimensionality reduction and clustering without needing to model sample-to-sample variation in expression.
-We will merge using the mutual nearest neighbors (MNN) method [@haghverdi2017batch] as described `r Biocpkg("simpleSingleCell", "batch.html", "elsewhere")`.
+We will merge using the mutual nearest neighbors (MNN) method [@haghverdi2018batch] as described `r Biocpkg("simpleSingleCell", "batch.html", "elsewhere")`.
 
 ```{r}
 library(SingleCellExperiment)
@@ -253,11 +253,12 @@ This is because `r CRANpkg("igraph")` contains a normalize method that will over
 ## Annotating cell types
 
 We use `findMarkers()` to identify the genes that define each cluster.
-This is done by testing for differential expression between each pair of clusters, and consolidating the results into a single table per cluster.
-See `r Biocpkg("simpleSingleCell", "reads.html#detecting-marker-genes-between-clusters", "here")` for details.
+This is done by testing for differential expression between each pair of clusters and consolidating the results into a single table per cluster -
+see `r Biocpkg("simpleSingleCell", "reads.html#detecting-marker-genes-between-clusters", "here")` for details.
+We also block on the sample of origin to avoid confounding effects from sample-to-sample variability or differential expression between genotypes.
 
 ```{r}
-markers <- findMarkers(sce, sce$cluster)
+markers <- findMarkers(sce, sce$cluster, block=sce$sample)
 ```
 
 ```{r, echo=FALSE}
@@ -266,7 +267,7 @@ hemo <- markers[[blood]]["Hbb-bh1",-(1:3)]
 stopifnot(all(unlist(hemo)>0))
 ```
 
-Of particular interest is cluster `blood`.
+Of particular interest is cluster `r blood`.
 This upregulates a range of hemoglobin genes (Figure \@ref(fig:bloodheat)) and probably represents cells in the erythroid lineage.
 
 ```{r bloodheat, fig.asp=2, fig.cap=sprintf("Heatmap of the log-fold changes for the top 50 genes expressed in cluster %s compared to all other clusters. Each column represents another cluster.", blood)}
