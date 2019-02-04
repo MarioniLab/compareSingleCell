@@ -1,0 +1,235 @@
+---
+title: Differential abundance analyses with the embryo chimera data set
+author:
+- name: Aaron T. L. Lun
+  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
+- name: Jonathan A. Griffiths
+  affiliation: *CRUK
+date: "`r Sys.Date()`"
+vignette: >
+  %\VignetteIndexEntry{04. Embryo differential abundance}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+output:
+  BiocStyle::html_document:
+    toc_float: true
+    titlecaps: false
+bibliography: ref.bib
+---
+
+<!--
+AL: asterisks below remove weird highlighting on my editor.
+****
+-->
+
+```{r, echo=FALSE, results="hide"}
+knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
+library(BiocStyle)
+```
+
+# Introduction
+
+We previously merged the samples together onto the same coordinate system to generate common clusters.
+Each cluster represents a molecular phenotype (in terms of gene expression profiles), which in turn is a proxy for cell states or types.
+Now, our aim is to identify differences between conditions for cells in each cluster.
+This allows us to quantify the effects of losing _Tal1_ during early embryonic development.
+
+```{r}
+library(SingleCellExperiment)
+sce <- readRDS("embryo_merged.rds")
+```
+
+The most obvious differences between conditions are those of changes in the per-cluster cell abundance.
+This will reveal which cell types are depleted or enriched upon loss of _Tal1_ function.
+Specifically, our aim is to detect significant changes in cell abundance between genotypes.
+This is done using the table of cell counts per cluster per sample, as shown below.
+
+```{r}
+cluster.counts <- table(sce$cluster, sce$sample)
+cluster.counts    
+```
+
+# Setting up for statistical modelling 
+
+Our differential abundance analysis will be performed using methods from the `r Biocpkg("edgeR")` package [@robinson2010edgeR].
+This uses a negative binomial generalized linear model (NB GLM) to handle overdispersed count data in experiments with limited replication.
+In our case, we have biological variation with only two replicates per condition, so `r Biocpkg("edgeR")` (or its contemporaries) is a natural choice for the analysis.
+The same strategy is used to analyze cell count data in mass cytometry experiments [@lun2017testing].
+
+```{r}
+library(edgeR)
+y.ab <- DGEList(cluster.counts)
+y.ab
+```
+
+Typical applications of `r Biocpkg("edgeR")` (for differential _expression_ analyses) perform a normalization step with `calcNormFactors()` to remove composition biases.
+This requires the assumption that most of the input features (i.e., genes) are not differentially expressed between conditions.
+While this assumption is reasonable for most gene expression data sets, we cannot say the same thing for cell abundance -
+it is generally too strong to assume that most cell types do not change in abundance between conditions.
+Thus, we will _not_ run `calcNormFactors()` here - at least, not at first (see below).
+Any changes we detect between conditions will represent differences in the proportion of cells in each cluster.
+
+Another typical step in `r Biocpkg("edgeR")` is to filter out low-abundance features.
+This aims to reduce computational work, improve the accuracy of the trend fitting and reduce the severity of the multiple testing correction.
+However, our features (i.e., clusters) are data-defined and - depending on the clustering algorithm - will generally not be of low-abundance^[Otherwise there would not have been enough evidence to define it in the first place!].
+Thus, this step can also be skipped unless the clustering algorithm tends to output many small clusters.
+
+# Modelling the biological variation
+
+We will use the quasi-likelihood (QL) framework [@chen2016reads], which involves estimating both the NB dispersion and the QL dispersion for each cluster. 
+We set up the design matrix to block on the batch differences between replicates.
+
+```{r}
+genotype <- c("ko", "ko", "wt", "wt")
+batch <- factor(c(1,2,1,2))
+design <- model.matrix(~0 + genotype + batch)
+design
+```
+
+We use the `estimateDisp()` function to estimate the NB dipersion for each cluster (Figure \@ref(fig:abplotbcv)).
+The role of the NB dispersion is to model the mean-variance trend, which is not easily accommodated by QL dispersions alone^[Due to the quadratic nature of the NB mean-variance trend.].
+
+```{r abplotbcv, fig.cap="Biological coefficient of variation (BCV) for each cluster with respect to its average abundance. BCVs are defined as the square root of the NB dispersion. Trended and common dispersion estimates are shown in blue and red, respectively."}
+y.ab <- estimateDisp(y.ab, design)
+summary(y.ab$trended.dispersion)
+plotBCV(y.ab, cex=1)
+```
+
+The QL dispersion models the uncertainty and variability of the per-cluster variance (Figure \@ref(fig:.
+This is, conversely, not well handled by the NB dispersions, so the two dispersion types complement each other in the final analysis.
+We use `glmQLFit()` to fit a GLM to the counts for each cluster and estimate the QL dispersion from the GLM deviance. 
+We set `robust=TRUE` to avoid distortions from highly variable clusters [@phipson2016robust].
+We also turn off the abundance trend as there are not enough features for a stable trend fit, nor is there evidence for a strong trend (Figure \@ref(fig:abplotql)).
+
+```{r abplotql, fig.cap="QL dispersion estimates for each cluster with respect to its average abundance. Quarter-root values of the raw estimates are shown in black while the shrunken estimates are shown in red. Shrinkage is performed towards the common dispersion in blue."}
+fit.ab <- glmQLFit(y.ab, design, robust=TRUE, abundance.trend=FALSE)
+summary(fit.ab$var.prior)
+summary(fit.ab$df.prior)
+plotQLDisp(fit.ab, cex=1)
+```
+
+# Testing for significant differences
+
+We test for differences in abundance between genotypes using `glmQLFTest()`.
+Many clusters are differentially abundant at a false discovery rate (FDR) of 5%.
+
+```{r}
+con <- makeContrasts(genotypeko - genotypewt, levels=design)
+res <- glmQLFTest(fit.ab, contrast=con)
+summary(decideTests(res))
+```
+
+The top few clusters are strongly depleted in the KO condition.
+
+```{r}
+tab <- topTags(res, n=nrow(res))
+head(tab$table, 10)
+```
+
+Further examination indicates that they are derived from the erythroid lineage, with high expression of hemoglobins and related genes (Figure \@ref(abplothemo)).
+This is consistent with the expected function of _Tal1_ in promoting erythroid differentiation.
+
+```{r abplothemo, fig.wide=TRUE, fig.cap="Distribution of _Hba-x_ expression in each cluster. Each point represents a cell and is coloured by the genotype."}
+library(scater)
+plotExpression(sce, x="cluster", "Hba-x", colour_by="tomato")
+```
+
+```{r, echo=FALSE, results="hide"}
+subtle <- "13"
+```
+
+A more subtle example is that of cluster `r subtle`, which increases in abundance in the KO condition. 
+Based on the expression of _Plac1_ and _Lgals1_ (Figure \@ref(subtleheat)), this cluster probably contains placental cells or their precursors.
+From this, it is tempting to speculate that the loss of _Tal1_ diverts cells into lineages that they would not normally differentiate towards.
+
+```{r subtleheat, fig.asp=2, fig.cap=sprintf("Heatmap of the log-fold changes for the top 50 genes expressed in cluster %s compared to all other clusters. Each column represents another cluster.", subtle)}
+chosen <- "13"
+tab$table[chosen,]
+
+markers <- readRDS("embryo_markers.rds")
+marker.set <- markers[[chosen]]
+head(rownames(marker.set), 20)
+
+logFCs <- as.matrix(marker.set[1:50,-(1:3)])
+colnames(logFCs) <- sub("logFC.", "", colnames(logFCs))
+
+library(pheatmap)
+max.lfc <- max(abs(range(logFCs)))
+pheatmap(logFCs, breaks=seq(-5, 5, length.out=101))
+```
+
+```{r, echo=FALSE, results="hide"}
+# Sanity check, that we've clicked on the right cluster.
+plac <- markers[[subtle]]["Plac1",-(1:3)]
+stopifnot(all(unlist(plac) > 0))
+```
+
+# Handling composition effects
+
+## Assuming most clusters do not change
+
+This data set contains a large change in abundance as the erythroid lineage is completely lost in the KO condition.
+An interesting question, then, is whether the _increases_ in abundance in the KO condition are (i) caused by concomitant compositional effects from the loss of the erythroid lineage,
+or (ii) they are a separate result of another biological process involving _Tal1_.
+This is not a question that is generally answerable without additional assumptions, one of which is that most clusters are not differentially abundant.
+Under this assumption, we use `calcNormFactors()` to compute normalization factors^[Not the same as size factors!] for each sample.
+
+```{r}
+y.ab2 <- calcNormFactors(y.ab)
+y.ab2$samples
+```
+
+We then proceed with the remainder of the `r Biocpkg("edgeR")` analysis, shown below in condensed format.
+The top hits do not change but many of the positive log-fold changes are shrunk towards zero.
+This suggests that, while still significant, the increases in abundance observed in our original analysis were magnified by composition effects 
+(conditional on the correctness of our above assumption).
+
+```{r}
+y.ab2 <- estimateDisp(y.ab2, design)
+fit.ab2 <- glmQLFit(y.ab2, design, robust=TRUE, abundance.trend=FALSE)
+res2 <- glmQLFTest(fit.ab2, contrast=con)
+topTags(res2, n=10)
+```
+
+## Removing the offending clusters
+
+Another approach to avoiding composition effects is to repeat the analysis after removing differentially abundant clusters with many cells.
+This provides a clearer picture of the changes in abundance among the remaining clusters.
+In this case, we would like to remove the blood-related clusters with strong hemoglobin expression.
+
+```{r}
+offenders <- c("2", "5", "4", "8") # TODO: replace with a more automated mechanism.
+y.ab3 <- DGEList(cluster.counts[setdiff(rownames(cluster.counts), offenders),])
+y.ab3
+```
+
+Note how the "library sizes" (i.e., the total number of cells in each sample) are much lower for the WT samples 3 and 4.
+This reflects the fact that the WT-only cluster of erythroid cells has been removed.
+The differential analysis will subsequently test for proportional differences in the non-blood cells.
+
+```{r}
+y.ab3 <- estimateDisp(y.ab3, design)
+fit.ab3 <- glmQLFit(y.ab3, design, robust=TRUE, abundance.trend=FALSE)
+res3 <- glmQLFTest(fit.ab3, contrast=con)
+topTags(res3, n=10)
+```
+
+A similar strategy can be used to focus on proportional changes within a single subpopulation of a very heterogeneous data set.
+For example, if we collected a whole blood data set, we could subset to T cells and test for changes in T cell subtypes (memory, killer, regulatory, etc.) 
+using the total number of T cells in each sample as the library size.
+This avoids detecting changes in T cell subsets that are driven by compositional effects from changes in abundance of, say, B cells in the same sample.
+
+# Concluding remarks 
+
+This workflow focuses on finding clusters that change in abundance, which are the most obvious manifestation of differences between conditions.
+The complementary approach is to look for changes in expression between conditions _within_ each cluster.
+As we will see, these two analyses represent two sides of the same coin when dealing with clusters defined by expression data.
+
+All software packages used in this workflow are publicly available from the Comprehensive R Archive Network (https://cran.r-project.org) or the Bioconductor project (http://bioconductor.org). 
+The specific version numbers of the packages used are shown below, along with the version of the R installation.
+
+```{r}
+sessionInfo()
+```
+
+# References
