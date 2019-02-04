@@ -1,9 +1,9 @@
 ---
 title: Merging the embryo chimera data set
 author:
-- name: Jonathan A. Griffiths
-  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
 - name: Aaron T. L. Lun
+  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
+- name: Jonathan A. Griffiths
   affiliation: *CRUK
 date: "`r Sys.Date()`"
 vignette: >
