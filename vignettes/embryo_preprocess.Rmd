@@ -91,10 +91,7 @@ gc()
 We store the count matrix in a `SingleCellExperiment` object with the metadata associated with each cell and gene.
 
 ```{r}
-untar(tarball, files=meta.path, exdir=tempdir())
 meta.tab <- read.delim(file.path(tempdir(), meta.path), stringsAsFactors=FALSE)
-
-untar(tarball, files=gene.path, exdir=tempdir())
 gene.tab <- read.delim(file.path(tempdir(), gene.path), 
     header=FALSE, stringsAsFactors=FALSE)
 colnames(gene.tab) <- c("ENSEMBL", "SYMBOL")
