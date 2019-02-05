@@ -1,0 +1,438 @@
+---
+title: Differential expression analyses with the embryo chimera data set
+author:
+- name: Aaron T. L. Lun
+  affiliation: &CRUK Cancer Research UK Cambridge Institute, Li Ka Shing Centre, Robinson Way, Cambridge CB2 0RE, United Kingdom
+- name: Jonathan A. Griffiths
+  affiliation: *CRUK
+date: "`r Sys.Date()`"
+vignette: >
+  %\VignetteIndexEntry{05. Differential expression}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+output:
+  BiocStyle::html_document:
+    toc_float: true
+    titlecaps: false
+bibliography: ref.bib
+---
+
+<!--
+AL: asterisks below remove weird highlighting on my editor.
+****
+-->
+
+```{r, echo=FALSE, results="hide"}
+knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
+library(BiocStyle)
+```
+
+# Introduction
+
+Another obvious differential analysis is to look for changes in expression between conditions within each cluster.
+This allows us to identify cell type-specific transcriptional differences caused by the loss of _Tal1_.
+Differential expression (DE) analyses are very much complementary to differential abundance analyses;
+these represent two sides of the same coin when dealing with clusters defined from expression data.
+
+To illustrate this duality, consider a scRNA-seq experiment involving a heterogeneous population and two biological conditions.
+Assume we have a cell type $X$ present in both conditions.
+Within $X$, some genes are differentially expressed between conditions.
+This leads to two possible outcomes:
+
+- The DE between conditions causes $X$ to form two separate clusters in expression space (or the low-dimensional space derived from the gene expression values).
+This manifests as differential abundance where one cluster is enriched in each condition.
+- The DE between conditions is not sufficient to split $X$ into two separate clusters, e.g., because `fastMNN()` identifies them as corresponding cell types and merges them together.
+This means that the differences between conditions manifests directly as DE within the single cluster corresponding to $X$.
+
+Thus, it is often necessary to consider both differential expression and abundance to fully characterize the differences between conditions in scRNA-seq experiments.
+In this workflow, we will be identifying differentially expressed genes (DEGs) upon loss of _Tal1_ function.
+We will focus on DEGs in the cluster that we previously annotated as placenta precursors.
+
+```{r}
+library(SingleCellExperiment)
+sce <- readRDS("embryo_merged.rds")
+placenta <- 13
+```
+
+```{r, echo=FALSE, results="hide"}
+# Sanity check, that we've clicked on the right cluster.
+markers <- readRDS("embryo_markers.rds")
+plac <- markers[[placenta]]["Plac1",-(1:3)]
+stopifnot(all(unlist(plac) > 0))
+rm(markers)
+gc()
+```
+
+# Setting up the count matrix
+
+We create a new count matrix where we sum counts together for all cells in the same cluster and sample.
+The summation creates "pseudo-bulk" count vectors that are more amenable to downstream analysis with standard tools such as `r Biocpkg("edgeR")`.
+More importantly, it reflects the fact that our biological replication occurs at the sample level [@lun2017overcoming].
+Supplying the per-cell counts directly would indicate that each cell is a biological replicate^[Unless one is using a mixture model, though this has its own problems.], which is not true in an experimental setting.
+
+```{r}
+library(scater)
+cluster.sample <- sprintf("Cluster%i.Sample%i", sce$cluster, sce$sample)
+summed <- sumCountsAcrossCells(sce, cluster.sample)
+dim(summed)
+```
+
+We will subset this matrix to our cluster of interest, i.e., cluster `r placenta`.
+We do not use all clusters in the DE analysis as the strong DE between clusters makes it difficult to compute a sensible average abundance to model the mean-dispersion trend.
+Batch effects may also differ between clusters, which would not be easily handled with a single additive term in the design matrix for the batch.
+Finally, it is usually more convenient to fit a number of small generalized linear models (one per cluster) than to try to fit one large model involving all clusters.
+
+```{r}
+keep <- grep(paste0("^Cluster", placenta), colnames(summed))
+summed <- summed[,keep]
+dim(summed)
+```
+
+We extract the sample of origin for each column from the column names of `summed`.
+
+```{r}
+head(colnames(summed))
+sample.id <- as.integer(sub(".*([0-9]+)$", "\\1", colnames(summed)))
+head(sample.id)
+```
+
+Finally, we construct a `DGEList` object for use in `r Biocpkg("edgeR")` [@robinson2010edgeR].
+
+```{r}
+library(edgeR)
+y.exp <- DGEList(summed)
+```
+
+# Testing for differential expression
+
+## Filtering and normalization
+
+A typical step in bulk RNA-seq data analyses is to remove samples with very low library sizes corresponding to failed library preparation or sequencing.
+In our situation, this is equivalent to removing cluster-sample combinations that have very few or lowly-sequenced cells.
+The corresponding summed count vectors are likely to be highly variable and thus reduce power for DE detection.
+The exact definition of "very low" will vary, but in this case, we define it to be log-library sizes that are more than 3 median absolute deviations from the median. 
+
+```{r}
+discarded <- isOutlier(y.exp$samples$lib.size, log=TRUE, type="lower")
+y.exp <- y.exp[,!discarded]
+```
+
+Another typical step in bulk RNA-seq analyses is to remove genes that are lowly expressed.
+This reduces computational work, improves the accuracy of mean-variance trend modelling and decreases the severity of the multiple testing correction.
+Here, we remove genes with an average count below 1 across samples^[This choice of threshold is somewhat arbitrary, but the exact choice is not critical.].
+
+```{r}
+keep <- aveLogCPM(y.exp) > aveLogCPM(1, lib.size=mean(y.exp$samples$lib.size))
+y.exp <- y.exp[keep,]
+summary(keep)
+```
+
+Finally, we correct for composition biases by computing normalization factors with the trimmed mean of M-values method [@robinson2010scaling].
+
+```{r}
+y.exp <- calcNormFactors(y.exp)
+y.exp$samples
+```
+
+## Modelling biological variability 
+
+We set up the design matrix with one term for each genotype/cluster combination and an additive term for the batch effect between replicates.
+Modelling the batch effect is necessary as `summed` is derived from the original count matrix, i.e., before batch correction.
+
+```{r}
+batch <- factor(c(1,2,1,2))[sample.id]
+genotype <- rep(c("KO", "WT"), each=2)[sample.id]
+design <- model.matrix(~0 + genotype + batch)
+design
+```
+
+We estimate the negative binomial (NB) dispersions with `estimateDisp()`.
+As previously mentioned, this models the mean-variance trend in count data (Figure \@ref(fig:bcvplot)).
+
+```{r bcvplot, fig.cap="Biological coefficient of variation (BCV) for each gene as a function of the average abundance. The BCV is computed as the square root of the NB dispersion after empirical Bayes shrinkage towards the trend. Trended and common BCV estimates are shown in blue and red, respectively."}
+y.exp <- estimateDisp(y.exp, design)
+summary(y.exp$trended.dispersion)
+plotBCV(y.exp)
+```
+
+We also estimate the quasi-likelihood dispersions with `glmQLFit()` [@chen2018reads].
+This accounts for the uncertainty and variability of gene-specific dispersions (Figure \@ref(fig:qlplot)). 
+
+```{r qlplot, fig.cap="QL dispersion estimates for each gene as a function of abundance. Raw estimates (black) are shrunk towards the trend (blue) to yield squeezed estimates (red)."}
+fit.exp <- glmQLFit(y.exp, design, robust=TRUE)
+summary(fit.exp$var.prior)
+summary(fit.exp$df.prior)
+plotQLDisp(fit.exp)    
+```
+
+## Hypothesis testing for DEGs
+
+We use the `glmQLFTest()` function to identify DEGs in the KO condition compared to the WT.
+DEGs are defined as those with non-zero log-fold changes at a false discovery rate of 5%.
+
+```{r}
+con <- makeContrasts(genotypeKO - genotypeWT, levels=design)
+res.exp <- glmQLFTest(fit.exp, contrast=con)
+summary(decideTests(res.exp))
+topTags(res.exp, n=10)
+```
+
+Amusingly, the top DEGs are hemoglobins that are downregulated in the KO condition.
+One would expect that these genes should not have been expressed at all in non-blood WT cells^[Though this may not be entirely unreasonable, as we shall discuss below.].
+This result may be caused by contamination of each droplet from the ambient pool of extracellular RNA [@lun2018distinguishing;@young2018soupx],
+which is filled with hemoglobin mRNAs in the WT samples but not in the KO samples.
+
+Ambient contamination is a phenomenon that is generally most pronounced in massively multiplexed scRNA-seq protocols.
+It tends to be less of an issue for plate-based experiments where the ambient solution is greatly diluted to ensure separation of individual cells in the cell sorter.
+Thus, for data from protocols such as SMART-seq2, it is generally satisfactory to stop at this point.
+For droplet-based experiments, some further work is required to reassure ourselves that the DE is not caused by differences in ambient RNA.
+
+# Avoiding problems with ambient RNA
+
+## Defining the ambient profile 
+
+To eliminate the effects of ambient RNA, we need to obtain an estimate of the ambient "expression" profile.
+This cannot be obtained from the count matrix in `sce`, so instead we need to go back to the raw count matrix for each sample.
+
+```{r}
+library(BiocFileCache)
+bfc <- BiocFileCache("raw_data", ask=FALSE)
+#tarball <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+#    "jmlab/chimera_tal1_data.tar.gz"))
+tarball <- "unswapped_matrices.tar.gz"
+```
+
+We follow the approach used in `emptyDrops()` [@lun2018distinguishing] and consider all barcodes with total counts below 100 to represent empty droplets.
+
+```{r}
+collected <- vector("list", length(sample.id))
+names(collected) <- sample.id
+for (i in sample.id) {
+    fname <- paste0("sample_", i, "_unswapped.mtx")
+    untar(tarball, exdir=tempdir(), files=fname)
+    curmat <- Matrix::readMM(file.path(tempdir(), fname))
+
+    is.empty <- Matrix::colSums(curmat) < 100
+    collected[[i]] <- Matrix::rowSums(curmat[,is.empty])
+    unlink(fname) # avoid overrunning temp space.
+}
+collected <- do.call(cbind, collected)
+dim(collected)
+```
+
+We supply it with the original row names for the entire data set.
+
+```{r}
+tarball <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+    "jmlab/chimera_tal1_data.tar.gz"))
+gene.path <- "chimera-tal1/genes.tsv"
+untar(tarball, files=gene.path, exdir=tempdir())
+
+gene.tab <- read.delim(file.path(tempdir(), gene.path), 
+    header=FALSE, stringsAsFactors=FALSE)
+rownames(collected) <- gene.tab[,1]
+```
+
+This allows us to easily match it with the rows in `sce`.
+In this case, we did not do any subsetting of `sce` so the correspondence should be exactly 1:1.
+
+```{r}
+m <- match(rowData(sce)$ENSEMBL, rownames(collected))
+stopifnot(all(!is.na(m))) # sanity check!
+collected <- collected[m,]    
+```
+
+## Repeating the DE analysis
+
+We combine `summed` with `collected` before creating a `DGEList` object.
+
+```{r}
+overall <- cbind(summed, collected)
+y.amb <- DGEList(overall)
+y.amb$samples 
+```
+
+We filter out low-abundance genes and estimate normalization factors as previously described.
+
+```{r}
+keep <- aveLogCPM(y.amb) > aveLogCPM(1, lib.size=mean(y.amb$samples$lib.size))
+y.amb <- y.amb[keep,]
+summary(keep)
+y.amb <- calcNormFactors(y.amb)
+y.amb$samples
+```
+
+Here, we use a new design matrix that accounts for the relationship between cluster `r placenta`'s expression and the ambient pool in the same sample.
+The first four coefficients represent the log-expression of the ambient pool in each sample,
+while the last two coefficients represent the log-fold change of the summed cell expression profiles over the ambient pool in the KO or WT conditions. 
+
+```{r}
+s <- factor(rep(sample.id, 2))
+new.geno <- rep(genotype, 2)
+ambient <- rep(c("N", "Y"), each=4)
+design.amb <- model.matrix(~0 + s + new.geno:ambient)
+
+# Get to full rank:
+design.amb <- design.amb[,!grepl("ambientY", colnames(design.amb))] 
+
+# Syntactically valid colnames:
+colnames(design.amb) <- make.names(colnames(design.amb)) 
+design.amb
+```
+
+We use this new design matrix to estimate the NB and QL dispersions.
+
+```{r}
+y.amb <- estimateDisp(y.amb, design.amb)
+summary(y.amb$trended.dispersion)
+fit.amb <- glmQLFit(y.amb, design.amb, robust=TRUE)    
+summary(fit.amb$var.prior)
+summary(fit.amb$df.prior)
+```
+
+Finally, we test for differences between WT and KO.
+The key here is to identify genes that have different cell/ambient log-fold changes between conditions.
+This corresponds to a non-zero two-way interaction effect between genotype and the cell/ambient factors. 
+(Equivalently, the interaction term can be interpreted as the difference in the KO/WT log-fold change computed from the cell profile compared to that from the ambient profiles.)
+By doing so, we can mitigate the effect of differences in the ambient pool between conditions.
+
+```{r}
+con <- makeContrasts(new.genoKO.ambientN - new.genoWT.ambientN, levels=design.amb)
+res.amb <- glmQLFTest(fit.amb, contrast=con)
+summary(decideTests(res.amb))
+topTags(res.amb, n=10)
+```
+
+## Combining with the standard DE analysis
+
+Unfortunately, testing the interaction term is not sufficient to avoid problems due to differences in the ambient pool.
+Consider a situation where the ambient pool contains a transcript $G$ in one condition but not the other.
+Further assume that there are droplets containing cells that also express $G$ at the same level between conditions.
+If the ambient pool contaminates the droplets in all samples, a non-zero log-fold change for $G$ will be introduced between conditions for the cell expression profiles.
+However, due to the presence of endogenous $G$, the log-fold change in the cells will not be as large as the log-fold change in the ambient profiles between conditions.
+This causes the interaction term to be significantly non-zero.
+
+Thus, some extra work is required to ensure that we are not detecting spurious DEGs.
+Specifically, we only consider DEGs where the direct KO/WT comparison is significant; the interaction term is significant; 
+and the KO/WT log-fold change is of the same sign as the interaction effect.
+This focuses on genes with changes in expression beyond that expected from ambient contamination.
+
+<!--
+As formulated above, the interaction term is equivalent to the KO/WT log-fold change in cells minus the KO/WT log-fold change in the ambient pool.
+Consider all the cases:
+
+```
+cells < ambient < 0 # Interesting
+cells < 0 < ambient # Interesting
+0 < cells < ambient # Possible artifact
+0 < ambient < cells # Interesting
+ambient < 0 < cells # Interesting
+ambient < cells < 0 # Possible artifact
+```
+
+So, as long as `cells` is of the same sign as `cells - ambient`, we're in business!
+-->
+
+
+```{r}
+common <- intersect(rownames(res.amb), rownames(res.exp))
+tab.exp <- res.exp$table[common,]
+tab.amb <- res.amb$table[common,]
+okay <- sign(tab.exp$logFC)==sign(tab.amb$logFC) 
+summary(okay)
+```
+
+We compute a single $p$-value by taking the larger of the two $p$-values from the direct and interaction contrasts.
+This is equivalent to an intersection-union test [@berger1978bioequivalence] and ensures that we can properly control the FDR later.
+For all genes that are not of interest, we set their $p$-values to unity.
+
+```{r}
+iut.p <- pmax(tab.exp$PValue, tab.amb$PValue)
+iut.p[!okay] <- 1
+```
+
+We use these statistics to create a final table of results.
+This conservatively defines a set of DEGs in the presence of differences in the ambient pool between conditions.
+
+```{r}
+final <- data.frame(row.names=common,
+    logFC=tab.exp$logFC, interaction=tab.amb$logFC,
+    PValue=iut.p, FDR=p.adjust(iut.p, method="BH"))
+final <- final[order(final$PValue),]
+sum(final$FDR <= 0.05)
+head(final, 10)
+```
+
+# Visualizing the results
+
+The `final` table contains a number of hemoglobin genes that one would not expect to be expressed in placental precursors.
+Further examination indicates that the hemoglobins are downregulated in the KO beyond what would be expected from their loss in the ambient pool (Figure \@ref(fig:hemoplot)).
+This suggests that there may be some hemoglobin expression in the placental precursors in the WT condition, 
+possibly representing erythropoietic potential [@zeigler2006allantois;@corbel2007hematopoietic] that is lost upon knocking out _Tal1_.
+
+```{r hemoplot, fig.asp=2, fig.cap="Relative log-expression of hemoglobin genes in the cells (crosses) and ambient pool (closed circles) for each sample, for the WT (black) and KO genotypes (red)."}
+hemo <- head(grep("Hb[ab]-", rownames(final)), 3)
+hemo <- rownames(final)[hemo]
+
+# Computing relative to WT baseline.
+as.cpms <- cpm(y.amb[hemo,], log=TRUE, prior.count=3)
+as.cpms[,1:4] <- as.cpms[,1:4] - rowMeans(as.cpms[,3:4])
+as.cpms[,5:8] <- as.cpms[,5:8] - rowMeans(as.cpms[,7:8])
+
+par(mfrow=c(3,1))
+for (i in hemo) {
+    plot(as.cpms[i,], main=i, xlab="", cex=2, cex.lab=1.5,
+        cex.main=1.5, ylab="Adjusted log-expression",
+        pch=ifelse(ambient=="Y", 16, 4),
+        col=ifelse(new.geno=="WT", "black", "red")
+    )
+}
+```
+
+Differences between the cell and ambient log-fold changes are more obvious in other genes.
+A few muscle-related genes are downregulated in the KO condition in spite of their upregulation in the KO ambient pool (Figure \@ref(fig:muscleplot)).
+This may indicate some loss of differentiation potential for muscle or connective tissue in placental precursors when _Tal1_ is lost.
+
+```{r muscleplot, fig.asp=2, fig.cap="Relative log-expression of muscle-related genes in the cells (crosses) and ambient pool (closed circles) for each sample, for the WT (black) and KO genotypes (red)."}
+muscle <- c("Tagln", "Acta2", "Actc1")
+
+# Computing relative to WT baseline.
+as.cpms <- cpm(y.amb[muscle,], log=TRUE, prior.count=3)
+as.cpms[,1:4] <- as.cpms[,1:4] - rowMeans(as.cpms[,3:4])
+as.cpms[,5:8] <- as.cpms[,5:8] - rowMeans(as.cpms[,7:8])
+
+par(mfrow=c(3,1))
+for (i in muscle) {
+    plot(as.cpms[i,], main=i, xlab="", cex=2, cex.lab=1.5,
+        cex.main=1.5, ylab="Adjusted log-expression",
+        pch=ifelse(ambient=="Y", 16, 4),
+        col=ifelse(new.geno=="WT", "black", "red")
+    )
+}
+```
+
+For particularly interesting changes, it is always worthwhile to return to the per-cell expression profiles to inspect the magnitude of the effect.
+Figure \@ref(percellplot) suggests that the downregulation of muscle-related genes is genuine but small relative to the cell-to-cell heterogeneity.
+This is consistent with the small fold changes (barely 2-fold) between conditions reported in `final`.
+
+```{r percellplot, fig.asp=0.5, fig.cap="Distribution of log-transformed normalized expression values for the muscle-related genes in the placenta cluster. Each point represents a cell and is coloured according to tdTomato expression (i.e., positive for KO cells). The black bard represents the median across all cells in each sample."}
+subsce <- sce[,sce$cluster==placenta]
+plotExpression(subsce, x="sample", colour_by="tomato", 
+    features=muscle, show_median=TRUE, ncol=3)
+```
+
+# Concluding remarks 
+
+The DE analysis shown above can be repeated for each cluster, provided there are enough cells in that cluster from each sample to obtain a summed count matrix.
+This complements the differential abundance analysis by providing another perspective into the differences between conditions.
+Indeed, examination of the DEGs may suggest that a single cluster should actually be treated as two separate cell types that have been merged together by `fastMNN()`.
+(Conversely, examination of markers for two differentially abundant clusters may suggest that they should actually be a single cell type with DE between conditions.)
+
+All software packages used in this workflow are publicly available from the Comprehensive R Archive Network (https://cran.r-project.org) or the Bioconductor project (http://bioconductor.org). 
+The specific version numbers of the packages used are shown below, along with the version of the R installation.
+
+```{r}
+sessionInfo()
+```
+
+# References
