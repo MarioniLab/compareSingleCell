@@ -285,6 +285,59 @@ pheatmap(logFCs, breaks=seq(-5, 5, length.out=101))
 One could repeat this procedure with all of the other clusters.
 However, it is more efficient to use our differential analyses to prioritize clusters of interest, so we will delay further annotation until that point.
 
+## Detecting doublets
+
+One potentially problematic feature of this data set is its high doublet frequency.
+Thus, we want a measure of how "doublet-like" each cell is, in order to assist downstream interpretation of our results.
+This is achieved using the `doubletCells()` function on each sample, as described `r Biocpkg("simpleSingleCell", "doublets.html#doublet-detection-by-simulation", "here")`.
+
+```{r}
+set.seed(1000)
+doublets <- numeric(ncol(sce))
+for (i in levels(sce$sample)) {
+    keep <- sce$sample==i
+    cur.sce <- sce[,keep]
+    scores <- doubletCells(cur.sce, BSPARAM=BiocSingular::IrlbaParam(deferred=TRUE))
+    doublets[keep] <- scores
+}
+summary(doublets)
+```
+
+Some clusters are entirely composed of putative doublets, while others simply contain a small proportion of doublets (Figure \@ref(fig:doubletplot)).
+The former are not of any interest and can be dismissed immediately.
+The latter are salvageable but require some care in interpretation during downstream analyses.
+
+```{r doubletplot, fig.asp=0.5, fig.cap="Distribution of per-cell doublet scores within each cluster. Each cell is a point coloured by sample of origin."}
+sce$doublet <- doublets
+plotColData(sce, "doublet", "cluster", colour_by="sample")
+```
+
+We perform a complementary analysis based on the clusters directly, as described `r Biocpkg("simpleSingleCell", "doublets.html#doublet-detection-with-clusters", "here")`.
+The top-ranking doublet-like clusters are defined by the absence of any uniquely expressed genes distinguishing them from a putative pair of source clusters.
+These are consistent with the most obvious offenders in Figure \@ref(fig:doubletplot).
+
+```{r}
+by.clust <- doubletCluster(sce, sce$cluster, block=sce$sample)
+by.clust[,1:8]
+```
+
+We remove the obvious doublet clusters prior to any downstream analysis.
+We give the benefit of the doubt to clusters containing but not dominated by doublets, provided that their results are treated with caution.
+
+```{r}
+offenders <- c("4", "8")
+sce <- sce[,sce$cluster %in% offenders]
+```
+
+```{r, echo=FALSE, results="hide"}
+# Sanity check for the identity of the offending clusters.
+stopifnot(identical(rownames(by.clust)[by.clust$N==0], offenders))
+
+by.clust <- split(doublets, clusters$membership)
+per.clust <- vapply(by.clust, median, FUN.VALUE=0)
+stopifnot(all(outer(per.clust[offenders], per.clust[setdiff(names(per.clust), offenders)], ">")))
+```
+
 # Concluding remarks
 
 We save the `SingleCellExperiment` object with the merged coordinates to file for downstream use in differential testing.
