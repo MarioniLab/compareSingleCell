@@ -193,43 +193,39 @@ For droplet-based experiments, some further work is required to reassure ourselv
 
 To eliminate the effects of ambient RNA, we need to obtain an estimate of the ambient "expression" profile.
 This cannot be obtained from the count matrix in `sce`, so instead we need to go back to the raw count matrix for each sample.
+We download and cache these matrices using `r Biocpkg("BiocFileCache")` as previousy described.
 
 ```{r}
 library(BiocFileCache)
 bfc <- BiocFileCache("raw_data", ask=FALSE)
-#tarball <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
-#    "jmlab/chimera_tal1_data.tar.gz"))
-tarball <- "unswapped_matrices.tar.gz"
+sample.paths <- character(length(sample.id))
+for (i in seq_along(sample.id)) {
+    fname <- sprintf("sample_%s_unswapped.mtx.gz", sample.id[i]) 
+    sample.paths[i] <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+       "jmlab/chimera_tal1_data/unfiltered", fname))
+}
 ```
 
 We follow the approach used in `emptyDrops()` [@lun2018distinguishing] and consider all barcodes with total counts below 100 to represent empty droplets.
 
 ```{r}
 collected <- vector("list", length(sample.id))
-names(collected) <- sample.id
-for (i in sample.id) {
-    fname <- paste0("sample_", i, "_unswapped.mtx")
-    untar(tarball, exdir=tempdir(), files=fname)
-    curmat <- Matrix::readMM(file.path(tempdir(), fname))
-
+for (i in seq_along(collected)) {
+    curmat <- Matrix::readMM(sample.paths[i])
     is.empty <- Matrix::colSums(curmat) < 100
     collected[[i]] <- Matrix::rowSums(curmat[,is.empty])
-    unlink(fname) # avoid overrunning temp space.
 }
 collected <- do.call(cbind, collected)
+colnames(collected) <- sample.id
 dim(collected)
 ```
 
 We supply it with the original row names for the entire data set.
 
 ```{r}
-tarball <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
-    "jmlab/chimera_tal1_data.tar.gz"))
-gene.path <- "chimera-tal1/genes.tsv"
-untar(tarball, files=gene.path, exdir=tempdir())
-
-gene.tab <- read.delim(file.path(tempdir(), gene.path), 
-    header=FALSE, stringsAsFactors=FALSE)
+gene.path <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+    "jmlab/chimera_tal1_data/genes.tsv.gz"))
+gene.tab <- read.delim(gene.path, header=FALSE, stringsAsFactors=FALSE)
 rownames(collected) <- gene.tab[,1]
 ```
 

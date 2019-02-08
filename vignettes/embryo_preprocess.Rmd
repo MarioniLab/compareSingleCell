@@ -50,21 +50,15 @@ This caches the data locally upon the first download, avoiding the need to repea
 ```{r}
 library(BiocFileCache)
 bfc <- BiocFileCache("raw_data", ask=FALSE)
-tarball <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
-    "jmlab/chimera_tal1_data.tar.gz"))
-
-# Unpacking the tar ball to get the necessary files.
-count.path <- "chimera-tal1/raw_counts.mtx"
-meta.path <- "chimera-tal1/meta.tab"
-gene.path <- "chimera-tal1/genes.tsv"
-untar(tarball, files=c(count.path, meta.path, gene.path), exdir=tempdir())
+count.path <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+    "jmlab/chimera_tal1_data/raw_counts.mtx.gz"))
 ```
 
 We load in the count data from the MatrixMarket format, using methods from the `r CRANpkg("Matrix")` package:
 
 ```{r}
 library(Matrix)
-counts <- readMM(file.path(tempdir(), count.path)) 
+counts <- readMM(count.path)
 dim(counts)
 ```
 
@@ -72,6 +66,7 @@ For the purposes of this demonstration, we will downsample to a quarter of the c
 This is simply to stay within time and memory limits on the Bioconductor build system^[Namely, 1 hour with 8 GB RAM.], and can be skipped by users with more computing resources.
 
 ```{r}
+# Taking only every 4th cell.
 down.keep <- rep(c(FALSE, FALSE, FALSE, TRUE), length.out=ncol(counts))
 counts <- counts[,down.keep,drop=FALSE]
 ```
@@ -88,14 +83,24 @@ gc()
 
 ## Constructing a `SingleCellExperiment`
 
+We download the cell- and gene-level metadata using `r Biocpkg("BiocFileCache")`, and read them into R.
+
+```{r}
+meta.path <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+    "jmlab/chimera_tal1_data/meta.tab.gz"))
+meta.tab <- read.delim(meta.path, stringsAsFactors=FALSE)
+head(meta.tab)
+
+gene.path <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
+    "jmlab/chimera_tal1_data/genes.tsv.gz"))
+gene.tab <- read.delim(gene.path, header=FALSE, stringsAsFactors=FALSE)
+colnames(gene.tab) <- c("ENSEMBL", "SYMBOL")
+head(gene.tab)
+```
+
 We store the count matrix in a `SingleCellExperiment` object with the metadata associated with each cell and gene.
 
 ```{r}
-meta.tab <- read.delim(file.path(tempdir(), meta.path), stringsAsFactors=FALSE)
-gene.tab <- read.delim(file.path(tempdir(), gene.path), 
-    header=FALSE, stringsAsFactors=FALSE)
-colnames(gene.tab) <- c("ENSEMBL", "SYMBOL")
-
 library(SingleCellExperiment)
 sce <- SingleCellExperiment(list(counts=counts), 
     colData=meta.tab[down.keep,], rowData=gene.tab)
