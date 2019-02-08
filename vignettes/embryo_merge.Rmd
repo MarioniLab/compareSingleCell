@@ -326,7 +326,9 @@ We give the benefit of the doubt to clusters containing but not dominated by dou
 
 ```{r}
 offenders <- c("4", "8")
-sce <- sce[,sce$cluster %in% offenders]
+retain <- !sce$cluster %in% offenders
+sce <- sce[,retain]
+summary(retain)
 ```
 
 ```{r, echo=FALSE, results="hide"}
