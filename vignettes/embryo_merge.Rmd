@@ -23,15 +23,20 @@ AL: asterisks below remove weird highlighting on my editor.
 -->
 
 ```{r, echo=FALSE, results="hide"}
-knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
 library(BiocStyle)
+```
+
+```{r, cache=FALSE, echo=FALSE, results="hide"}
+SingleCell:::.compile("embryo_preprocess")
 ```
 
 # Introduction
 
 Once a processed `SingleCellExperiment` is available, the next step is to merge different samples to place them on the same coordinate system.
 This allows us to perform downstream procedures like dimensionality reduction and clustering without needing to model sample-to-sample variation in expression.
-We will merge using the mutual nearest neighbors (MNN) method [@haghverdi2018batch] as described `r Biocpkg("simpleSingleCell", "batch.html", "elsewhere")`.
+We will merge using the mutual nearest neighbors (MNN) method [@haghverdi2018batch] as described `r Biocpkg("simpleSingleCell", "batch.html", "elsewhere")`,
+using the `SingleCellExperiment` object that we constructed in the `r compareSingleCell:::.link("embryo_merge", NULL, "previous workflow")`.
 
 ```{r}
 library(SingleCellExperiment)

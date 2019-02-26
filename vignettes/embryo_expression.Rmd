@@ -27,6 +27,10 @@ knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
 library(BiocStyle)
 ```
 
+```{r, cache=FALSE, echo=FALSE, results="hide"}
+compareSingleCell:::.compile("embryo_merge")
+```
+
 # Introduction
 
 Another obvious differential analysis is to look for changes in expression between conditions within each cluster.
@@ -46,7 +50,7 @@ This means that the differences between conditions manifests directly as DE with
 
 Thus, it is often necessary to consider both differential expression and abundance to fully characterize the differences between conditions in scRNA-seq experiments.
 In this workflow, we will be identifying differentially expressed genes (DEGs) upon loss of _Tal1_ function.
-We will focus on DEGs in the cluster that we previously annotated as placenta precursors.
+We will focus on DEGs in the cluster that we `r compareSingleCell:::.link("embryo_merge", NULL, "previously")` annotated as placenta precursors.
 
 ```{r}
 library(SingleCellExperiment)

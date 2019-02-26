@@ -23,7 +23,7 @@ AL: asterisks below remove weird highlighting on my editor.
 -->
 
 ```{r, echo=FALSE, results="hide"}
-knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE)
+knitr::opts_chunk$set(error=FALSE, warning=FALSE, message=FALSE, cache=TRUE)
 library(BiocStyle)
 ```
 
