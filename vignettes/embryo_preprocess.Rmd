@@ -56,7 +56,7 @@ count.path <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
 
 We load in the count data from the MatrixMarket format, using methods from the `r CRANpkg("Matrix")` package:
 
-```{r}
+```{r, cache.lazy=FALSE}
 library(Matrix)
 counts <- readMM(count.path)
 dim(counts)
@@ -65,7 +65,7 @@ dim(counts)
 For the purposes of this demonstration, we will downsample to a quarter of the cells in the original data set.
 This is simply to stay within time and memory limits on the Bioconductor build system^[Namely, 1 hour with 8 GB RAM.], and can be skipped by users with more computing resources.
 
-```{r}
+```{r, cache.lazy=FALSE}
 # Taking only every 4th cell.
 down.keep <- rep(c(FALSE, FALSE, FALSE, TRUE), length.out=ncol(counts))
 counts <- counts[,down.keep,drop=FALSE]
@@ -162,7 +162,7 @@ clusters <- quickCluster(sce, use.ranks=FALSE, pc.approx=TRUE, block=sce$sample)
 length(unique(clusters))
 
 sce <- computeSumFactors(sce, clusters=clusters, min.mean=0.1)
-summary(sizeFactors(sce))    
+summary(sizeFactors(sce))
 ```
 
 We check that the size factors are roughly aligned with the total library sizes (Figure \@ref(fig:normplot)).
@@ -176,7 +176,7 @@ plot(Matrix::colSums(counts(sce)), sizeFactors(sce), xlab="Total library size",
 
 We use the size factors to compute log-transformed normalized expression values, stored as the `"logcounts"` assay.
 
-```{r}
+```{r, cache.lazy=FALSE}
 sce <- normalize(sce)
 assayNames(sce)
 ```

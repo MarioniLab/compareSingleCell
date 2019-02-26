@@ -28,7 +28,7 @@ library(BiocStyle)
 ```
 
 ```{r, cache=FALSE, echo=FALSE, results="hide"}
-SingleCell:::.compile("embryo_preprocess")
+compareSingleCell:::.compile("embryo_preprocess")
 ```
 
 # Introduction
@@ -38,7 +38,7 @@ This allows us to perform downstream procedures like dimensionality reduction an
 We will merge using the mutual nearest neighbors (MNN) method [@haghverdi2018batch] as described `r Biocpkg("simpleSingleCell", "batch.html", "elsewhere")`,
 using the `SingleCellExperiment` object that we constructed in the `r compareSingleCell:::.link("embryo_merge", NULL, "previous workflow")`.
 
-```{r}
+```{r, cache.lazy=FALSE}
 library(SingleCellExperiment)
 sce <- readRDS("embryo_processed.rds")
 ```
@@ -187,9 +187,9 @@ overall <- batchelor::fastMNN(ko.out$corrected, wt.out$corrected,
 metadata(overall)$lost.var
 ```
 
-We store the result as in the `reducedDims` slot of our `SingleCellExperiment` object, for use in downstream functions.
+We store the result in the `reducedDims` slot of our `SingleCellExperiment` object, for use in downstream functions.
 
-```{r}
+```{r, cache.lazy=FALSE}
 # Cell order is the same between sce and corrected: see comments.
 reducedDim(sce, "corrected") <- overall$corrected
 ```
@@ -211,7 +211,7 @@ In such cases, we suggest assigning unique column names to each cell so that one
 We use $t$-stochastic neighbor embedding (t-SNE) plots [@van2008visualizing] to perform further dimensionality reduction for visualization.
 In the uncorrected data, cells clearly separate by genotype with no visible batch effects between replicates (Figure \@ref(fig:beforeplot)).
 
-```{r beforeplot, fig.cap="t-SNE plot of the embryo data before MNN correction. Each point represents a cell and is coloured by the sample of origin (KO: 1 and 2, WT: 3 and 4)."}
+```{r beforeplot, cache.lazy=FALSE, fig.cap="t-SNE plot of the embryo data before MNN correction. Each point represents a cell and is coloured by the sample of origin (KO: 1 and 2, WT: 3 and 4)."}
 library(scater)
 old <- sce
 reducedDim(sce, "PCA") <- do.call(rbind, pc.out)
@@ -221,7 +221,7 @@ plotTSNE(sce, rerun=TRUE, run_args=list(use_dimred="PCA"), colour_by="sample")
 After correction, cells from all samples are merged together in the majority of subpopulations (Figure \@ref(fig:afterplot)).
 This is consistent with the removal of the inter-genotype differences and simplifies annotation and interpretation in downstream analyses.
 
-```{r afterplot, fig.cap="t-SNE plot of the embryo data after MNN correction. Each point represents a cell and is coloured by the sample of origin."}
+```{r afterplot, cache.lazy=FALSE, fig.cap="t-SNE plot of the embryo data after MNN correction. Each point represents a cell and is coloured by the sample of origin."}
 sce <- runTSNE(sce, use_dimred="corrected", colour_by="sample")
 plotTSNE(sce, colour_by="sample")
 ```
@@ -242,7 +242,7 @@ table(clusters$membership, sce$sample)
 
 We visually examine the clusters on a t-SNE plot to confirm that a sensible partitioning was generated (Figure \@ref(fig:clusterplot)).
 
-```{r clusterplot, fig.cap="t-SNE plot of the MNN-corrected embryo data, where each point represents a cell and is coloured by the identity of the cluster to which it is assigned. The cluster number is also shown at the median coordinates across all cells in that cluster."}
+```{r clusterplot, cache.lazy=FALSE, fig.cap="t-SNE plot of the MNN-corrected embryo data, where each point represents a cell and is coloured by the identity of the cluster to which it is assigned. The cluster number is also shown at the median coordinates across all cells in that cluster."}
 sce$cluster <- factor(clusters$membership)
 plotTSNE(sce, colour_by="cluster", text_by="cluster", text_colour="red")
 ```
@@ -312,7 +312,7 @@ Some clusters are entirely composed of putative doublets, while others simply co
 The former are not of any interest and can be dismissed immediately.
 The latter are salvageable but require some care in interpretation during downstream analyses.
 
-```{r doubletplot, fig.asp=0.5, fig.cap="Distribution of per-cell doublet scores within each cluster. Each cell is a point coloured by sample of origin."}
+```{r doubletplot, cache.lazy=FALSE, fig.asp=0.5, fig.cap="Distribution of per-cell doublet scores within each cluster. Each cell is a point coloured by sample of origin."}
 sce$doublet <- doublets
 plotColData(sce, "doublet", "cluster", colour_by="sample")
 ```
