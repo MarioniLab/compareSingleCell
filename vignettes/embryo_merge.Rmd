@@ -166,12 +166,10 @@ In this case, we first merge samples from the same genotype to remove the batch 
 Note the use of `pc.input=TRUE` to specify that the input values are already in low-dimensional PC space.
 
 ```{r}
-ko.out <- batchelor::fastMNN(pc.out[["1"]], pc.out[["2"]], 
-    pc.input=TRUE, compute.variances=TRUE)
-metadata(ko.out)$lost.var
-wt.out <- batchelor::fastMNN(pc.out[["3"]], pc.out[["4"]], 
-    pc.input=TRUE, compute.variances=TRUE)
-metadata(wt.out)$lost.var
+ko.out <- batchelor::fastMNN(pc.out[["1"]], pc.out[["2"]], pc.input=TRUE)
+metadata(ko.out)$merge.info$lost.var
+wt.out <- batchelor::fastMNN(pc.out[["3"]], pc.out[["4"]], pc.input=TRUE)
+metadata(wt.out)$merge.info$lost.var
 ```
 
 The `lost.var` represents the proportion of variance in each batch that is removed by the batch correction^[Specifically, the orthogonalization step, as described `r Biocpkg("simpleSingleCell", "batch.html#with-diagnostics", "here")`.].
@@ -182,9 +180,8 @@ Our next step is to merge samples across genotypes to remove technical and unint
 This includes sex and changes in expression induced by injection or cell sorting.
 
 ```{r}
-overall <- batchelor::fastMNN(ko.out$corrected, wt.out$corrected,
-    pc.input=TRUE, compute.variances=TRUE)
-metadata(overall)$lost.var
+overall <- batchelor::fastMNN(ko.out$corrected, wt.out$corrected, pc.input=TRUE)
+metadata(overall)$merge.info$lost.var
 ```
 
 We store the result in the `reducedDims` slot of our `SingleCellExperiment` object, for use in downstream functions.
