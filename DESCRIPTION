@@ -1,8 +1,10 @@
 Package: compareSingleCell 
-Title: A workflow for comparative analyses of single-cell RNA-seq data with Bioconductor
-Version: 0.98.0
-Date: 2019-01-21
-Authors@R: person(role=c("aut", "cre"), "Aaron", "Lun", email = "infinite.monkeys.with.keyboards@gmail.com")
+Title: Comparative Analyses of Single-Cell RNA-seq Data with Bioconductor
+Version: 0.99.0
+Date: 2019-05-04
+Authors@R: c(
+    person(role=c("aut", "cre"), "Aaron", "Lun", email = "infinite.monkeys.with.keyboards@gmail.com"),
+    person(role=c("aut"), "Jonathan", "Griffiths"))
 Description: Describes a comparative analysis of scRNA-seq data using scran, scater and other Bioconductor packages.
     This uses a multi-condition replicated data set from a study of early mammalian development. It demonstrates how 
     merge sample together to test for differential abundance and differential expression between conditions.
@@ -11,12 +13,20 @@ Suggests: knitr,
         SingleCellExperiment,
         scater,
         scran,
-        DropletUtils
+        DropletUtils,
+        batchelor,
+        BiocSingular,
+        BiocFileCache,
+        TxDb.Mmusculus.UCSC.mm10.ensGene,
+        pheatmap,
+        igraph,
+        edgeR,
+        Matrix
 License: Artistic-2.0
 Encoding: UTF-8
 LazyData: true
 VignetteBuilder: knitr
 biocViews: Workflow, SingleCellWorkflow
 NeedsCompilation: no
-URL: https://www.bioconductor.org/help/workflows/simpleSingleCell/ 
+URL: https://www.bioconductor.org/help/workflows/compareSingleCell/ 
 RoxygenNote: 6.1.1
