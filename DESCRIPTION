@@ -1,7 +1,7 @@
 Package: compareSingleCell 
 Title: Comparative Analyses of Single-Cell RNA-seq Data with Bioconductor
-Version: 0.99.0
-Date: 2019-05-04
+Version: 0.99.1
+Date: 2019-05-09
 Authors@R: c(
     person(role=c("aut", "cre"), "Aaron", "Lun", email = "infinite.monkeys.with.keyboards@gmail.com"),
     person(role=c("aut"), "Jonathan", "Griffiths"))
