@@ -1,7 +1,7 @@
 Package: compareSingleCell 
 Title: Comparative Analyses of Single-Cell RNA-seq Data with Bioconductor
-Version: 0.99.1
-Date: 2019-05-09
+Version: 0.99.2
+Date: 2019-05-10
 Authors@R: c(
     person(role=c("aut", "cre"), "Aaron", "Lun", email = "infinite.monkeys.with.keyboards@gmail.com"),
     person(role=c("aut"), "Jonathan", "Griffiths"))
@@ -27,6 +27,7 @@ Encoding: UTF-8
 LazyData: true
 VignetteBuilder: knitr
 biocViews: Workflow, SingleCellWorkflow
+Workflow: True
 NeedsCompilation: no
 URL: https://www.bioconductor.org/help/workflows/compareSingleCell/ 
 RoxygenNote: 6.1.1
