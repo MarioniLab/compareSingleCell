@@ -49,7 +49,7 @@ This caches the data locally upon the first download, avoiding the need to repea
 
 ```{r}
 library(BiocFileCache)
-bfc <- BiocFileCache("raw_data", ask=FALSE)
+bfc <- BiocFileCache(ask=FALSE)
 count.path <- bfcrpath(bfc, file.path("https://content.cruk.cam.ac.uk/",
     "jmlab/chimera_tal1_data/raw_counts.mtx.gz"))
 ```

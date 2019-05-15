@@ -201,7 +201,7 @@ We download and cache these matrices using `r Biocpkg("BiocFileCache")` as previ
 
 ```{r}
 library(BiocFileCache)
-bfc <- BiocFileCache("raw_data", ask=FALSE)
+bfc <- BiocFileCache(ask=FALSE)
 sample.paths <- character(length(sample.id))
 for (i in seq_along(sample.id)) {
     fname <- sprintf("sample_%s_unswapped.mtx.gz", sample.id[i]) 
